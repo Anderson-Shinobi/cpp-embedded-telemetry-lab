@@ -31,6 +31,7 @@ endfunction()
 include(CTest)
 
 add_subdirectory(protocol)
+add_subdirectory(host)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
