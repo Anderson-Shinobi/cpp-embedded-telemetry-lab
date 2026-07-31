@@ -110,3 +110,8 @@ ou:
 Etapas futuras poderão adicionar firmware Zephyr, simulação Renode,
 transportes e fault injection. Esses componentes não fazem parte do estado
 atual.
+
+
+## License
+
+This project is released under the MIT License. See the [`LICENSE`](LICENSE) file for details.
