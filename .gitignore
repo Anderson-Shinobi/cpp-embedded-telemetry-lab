@@ -1,1 +1,5 @@
 /build*/
+/build-v030-zephyr-native/
+/build-v030-zephyr-nucleo/
+/build-v030-twister/
+/build-v030-host-regression/
