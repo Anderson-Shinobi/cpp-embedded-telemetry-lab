@@ -131,6 +131,17 @@ Plataformas validadas:
 - `nucleo_f401re/stm32f401xe`: build ARM e geração de artefatos, sem execução
   física.
 
+## Demo
+
+Execute a demonstração limpa ou a apresentação completa:
+
+```sh
+./tools/run-firmware-demo.sh
+./tools/present-firmware-demo.sh
+```
+
+Consulte [docs/GIF_DEMO.md](docs/GIF_DEMO.md) para preparar uma gravação curta.
+
 ## Sanitizers
 
 Use builds separadas e acrescente, conforme o diagnóstico desejado:
