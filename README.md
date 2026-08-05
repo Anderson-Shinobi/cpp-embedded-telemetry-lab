@@ -159,6 +159,25 @@ Robot Framework Reports
 The Host CTest total is preserved as a separately reported validation result;
 it is not calculated here from the individual Protocol, Host and smoke counts.
 
+### Release Validation
+
+The complete release validation pipeline passed successfully, covering Host CTest, Zephyr Twister/Ztest, `native_sim`, NUCLEO-F401RE, Renode Cortex-M4 emulation, USART2 capture, CRC-32 validation, Robot Framework and deterministic execution.
+
+<details>
+<summary>View terminal validation result</summary>
+
+<br>
+
+<p align="center">
+  <img
+    src="docs/assets/release-validation-terminal.png"
+    alt="Terminal showing all cpp-embedded-telemetry-lab release validation checks passing"
+    width="100%"
+  >
+</p>
+
+</details>
+
 ### Telemetry Frame Validation
 
 Each captured frame is validated for:
