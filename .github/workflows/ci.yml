@@ -135,12 +135,19 @@ jobs:
     timeout-minutes: 30
     env:
       DEPENDENCY_COMMIT: 93662e741ada326ebd31f856163036c5c2c1625f
-      DEPENDENCY_SOURCE: ${{ runner.temp }}/cpp-safe-concurrent-buffer
-      DEPENDENCY_BUILD: ${{ runner.temp }}/cpp-safe-concurrent-buffer-build
-      DEPENDENCY_PREFIX: ${{ runner.temp }}/cpp-safe-concurrent-buffer-prefix
-      HOST_BUILD_DIR: ${{ runner.temp }}/host-build
-      HOST_RESULTS_DIR: ${{ runner.temp }}/host-results
     steps:
+      - name: Configure temporary directories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            printf 'DEPENDENCY_SOURCE=%s\n' "${RUNNER_TEMP}/cpp-safe-concurrent-buffer"
+            printf 'DEPENDENCY_BUILD=%s\n' "${RUNNER_TEMP}/cpp-safe-concurrent-buffer-build"
+            printf 'DEPENDENCY_PREFIX=%s\n' "${RUNNER_TEMP}/cpp-safe-concurrent-buffer-prefix"
+            printf 'HOST_BUILD_DIR=%s\n' "${RUNNER_TEMP}/host-build"
+            printf 'HOST_RESULTS_DIR=%s\n' "${RUNNER_TEMP}/host-results"
+          } >> "${GITHUB_ENV}"
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -215,11 +222,17 @@ jobs:
     name: Firmware Twister and Ztest
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    env:
-      ZEPHYR_WORKSPACE: ${{ runner.temp }}/zephyr-workspace
-      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-workspace/zephyr
-      TWISTER_OUTDIR: ${{ runner.temp }}/twister-results
     steps:
+      - name: Configure temporary directories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            printf 'ZEPHYR_WORKSPACE=%s\n' '/tmp/zephyr-workspace'
+            printf 'ZEPHYR_BASE=%s\n' '/tmp/zephyr-workspace/zephyr'
+            printf 'TWISTER_OUTDIR=%s\n' "${RUNNER_TEMP}/twister-results"
+          } >> "${GITHUB_ENV}"
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -243,7 +256,7 @@ jobs:
       - name: Set up Zephyr and ARM toolchain
         uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
         with:
-          base-path: ${{ runner.temp }}/zephyr-workspace
+          base-path: /tmp/zephyr-workspace
           app-path: manifest
           sdk-version: 1.0.1
           toolchains: arm-zephyr-eabi
@@ -295,14 +308,20 @@ jobs:
     name: Firmware builds and native_sim
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    env:
-      ZEPHYR_WORKSPACE: ${{ runner.temp }}/zephyr-workspace
-      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-workspace/zephyr
-      FIRMWARE_RESULTS_DIR: ${{ runner.temp }}/nucleo-artifact/evidence
-      NATIVE_BUILD_DIR: ${{ runner.temp }}/native-sim-build
-      NUCLEO_BUILD_DIR: ${{ runner.temp }}/nucleo-f401re-build
-      FIRMWARE_ARTIFACT_DIR: ${{ runner.temp }}/nucleo-artifact
     steps:
+      - name: Configure temporary directories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            printf 'ZEPHYR_WORKSPACE=%s\n' '/tmp/zephyr-workspace'
+            printf 'ZEPHYR_BASE=%s\n' '/tmp/zephyr-workspace/zephyr'
+            printf 'FIRMWARE_RESULTS_DIR=%s\n' "${RUNNER_TEMP}/nucleo-artifact/evidence"
+            printf 'NATIVE_BUILD_DIR=%s\n' "${RUNNER_TEMP}/native-sim-build"
+            printf 'NUCLEO_BUILD_DIR=%s\n' "${RUNNER_TEMP}/nucleo-f401re-build"
+            printf 'FIRMWARE_ARTIFACT_DIR=%s\n' "${RUNNER_TEMP}/nucleo-artifact"
+          } >> "${GITHUB_ENV}"
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -326,7 +345,7 @@ jobs:
       - name: Set up Zephyr and ARM toolchain
         uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
         with:
-          base-path: ${{ runner.temp }}/zephyr-workspace
+          base-path: /tmp/zephyr-workspace
           app-path: manifest
           sdk-version: 1.0.1
           toolchains: arm-zephyr-eabi
@@ -416,11 +435,18 @@ jobs:
     needs:
       - firmware-build
     env:
-      RENODE_HOME: ${{ runner.temp }}/renode
       RENODE_BUILD_DIR: /tmp/cpp-embedded-telemetry-ci-renode-build
       RENODE_RESULTS_DIR: /tmp/cpp-embedded-telemetry-ci-renode-results
-      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-base
     steps:
+      - name: Configure temporary directories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            printf 'RENODE_HOME=%s\n' "${RUNNER_TEMP}/renode"
+            printf 'ZEPHYR_BASE=%s\n' "${RUNNER_TEMP}/zephyr-base"
+          } >> "${GITHUB_ENV}"
+
       - name: Check out repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
