@@ -3,3 +3,9 @@
 /build-v030-zephyr-nucleo/
 /build-v030-twister/
 /build-v030-host-regression/
+/renode/results/
+/robot_output.xml
+/output.xml
+/log.html
+/report.html
+*.log

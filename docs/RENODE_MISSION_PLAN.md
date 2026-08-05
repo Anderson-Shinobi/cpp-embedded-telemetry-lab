@@ -23,22 +23,22 @@ booted it headlessly through the complete deterministic workload. Its USART2
 file backend captured exactly eight ordered 68-character `TLFRAME` values, the
 expected summary, and the final completion marker.
 
-Readiness remains partial at the mission level because the repository still
-has no durable Renode scenario, Robot acceptance suite, Protocol Core capture
-validator, or CI integration. The upstream STM32F4 model is a viable base but
-is not an exact STM32F401RE board description: its modeled flash, RAM, CPU
-variant label, and SysTick frequency are broader or different from the target.
+Mission 4 has now added a durable minimal platform, a parameterized Renode
+scenario, seven Robot acceptance cases, local runners, and a reusable Protocol
+v1 capture validator. CI integration remains outside the mission. The project
+platform narrows flash, RAM, and SysTick to the target values without claiming
+complete STM32F401RE peripheral fidelity.
 
 Readiness gates:
 
-| Gate | Initial state | Required Mission 4 result |
+| Gate | Current state | Evidence |
 |---|---|---|
-| NUCLEO-F401RE ELF | READY | Reproduce the pristine build and record the `zephyr.elf` checksum in the validation run. |
-| Deterministic frames | READY | Preserve exactly eight ordered frames. |
-| Protocol and CRC | READY | Reuse Protocol Core as the validation authority. |
-| Headless execution | READY | Productize the proven non-interactive command with a finite timeout. |
-| Console capture | READY | Productize capture from USART2 at `0x40004400`, IRQ 38, 115200 baud. |
-| Robot automation | PARTIALLY READY | The official runner passed a packaged smoke test; project suites, keywords, failure behavior, and reports remain to be added. |
+| NUCLEO-F401RE ELF | READY | The pristine runner generates and validates `zephyr.elf` outside the checkout. |
+| Deterministic frames | READY | Three independent captures are byte-for-byte identical. |
+| Protocol and CRC | READY | All eight frames pass the public Protocol v1 and CRC contract. |
+| Headless execution | READY | The local runner terminates under a finite wall-clock timeout. |
+| Console capture | READY | USART2 is captured at `0x40004400`, IRQ 38, 115200 baud. |
+| Robot automation | READY | Seven project acceptance cases pass and generate XML and HTML reports. |
 
 Preparation evidence and constraints:
 
@@ -108,7 +108,7 @@ The planned execution sequence is:
 
 ## Proposed Files
 
-Initial required files:
+Implemented files:
 
 - `renode/platforms/nucleo_f401re.repl` — platform description or a minimal
   project wrapper around a verified upstream platform.
@@ -121,16 +121,15 @@ Initial required files:
 - `docs/RENODE.md` — versioned architecture, platform assumptions,
   troubleshooting, and validation evidence.
 
-Expected supporting files, subject to the first design checkpoint:
+Supporting validation file:
 
-- `renode/validation/CMakeLists.txt` — isolated host validator build linked to
-  `telemetry::protocol`.
-- `renode/validation/validate_capture.cpp` — capture validator that invokes
-  Protocol Core deserialization and returns machine-readable failures.
+- `renode/tests/resources/telemetry_validation.py` — Robot and command-line
+  validator for the public Protocol v1 fields, ordering, completion markers,
+  and reflected CRC-32 contract.
 
-No planned Renode file will be added to the root Host build by default. The
-validator may be enabled only by the Renode validation workflow so that the
-normal Host and Zephyr configure paths remain independent.
+No Renode file is added to the root Host build. The validator is invoked only
+by the Renode validation workflow, so the normal Host and Zephyr configure
+paths remain independent.
 
 ## Validation Goals
 

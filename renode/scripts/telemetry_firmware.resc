@@ -1,0 +1,11 @@
+# The shell runners replace these two placeholders in a temporary copy.
+$name?="telemetry-firmware"
+$elf?=@ELF_PATH@
+$platform?=@PLATFORM_PATH@
+
+mach create $name
+machine LoadPlatformDescription $platform
+sysbus LoadELF $elf
+
+# Capture must be attached before starting the machine. The local headless
+# runner appends a bounded RunFor scenario; Robot starts and stops explicitly.

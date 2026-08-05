@@ -11,8 +11,8 @@ amostras determinísticas, serializa frames de 34 bytes, usa uma `k_msgq`
 estática e duas threads, transmite oito linhas `TLFRAME` e termina com métricas
 validadas.
 
-Renode, hardware físico, transportes reais e fault injection avançado ainda
-não estão implementados.
+Hardware físico, transportes reais e fault injection avançado ainda não estão
+implementados.
 
 ## Arquitetura
 
@@ -142,6 +142,18 @@ Execute a demonstração limpa ou a apresentação completa:
 
 Consulte [docs/GIF_DEMO.md](docs/GIF_DEMO.md) para preparar uma gravação curta.
 
+## Renode Validation
+
+O ELF ARM para NUCLEO-F401RE pode ser executado em Renode headless, com captura
+da USART2 e validação automatizada dos oito frames pelo Robot Framework:
+
+```sh
+./tools/run-renode-validation.sh --rebuild
+```
+
+O modelo cobre o caminho necessário ao firmware, sem afirmar suporte completo
+a todos os periféricos STM32F401RE. Consulte [docs/RENODE.md](docs/RENODE.md).
+
 ## Sanitizers
 
 Use builds separadas e acrescente, conforme o diagnóstico desejado:
@@ -160,7 +172,7 @@ ou:
 
 ## Roadmap
 
-Etapas futuras poderão adicionar simulação Renode, transportes e fault
+Etapas futuras poderão adicionar integração contínua, transportes e fault
 injection. Esses componentes não fazem parte do estado atual.
 
 
