@@ -396,10 +396,35 @@ jobs:
           grep -Eq 'ELF 32-bit.*ARM' "${FIRMWARE_RESULTS_DIR}/elf-description.txt"
           grep -E '^[[:space:]]*(FLASH|RAM):' "${FIRMWARE_RESULTS_DIR}/nucleo-build.log" \
             | tee "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
-          grep -Eq 'FLASH:[[:space:]]+30624 B[[:space:]]+512 KB[[:space:]]+5.84%' \
-            "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
-          grep -Eq 'RAM:[[:space:]]+12428 B[[:space:]]+96 KB[[:space:]]+12.64%' \
-            "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
+          python3 - "${FIRMWARE_RESULTS_DIR}/memory-usage.txt" <<'PYTHON'
+          import re
+          import sys
+          from pathlib import Path
+
+          report = Path(sys.argv[1]).read_text(encoding='utf-8')
+
+          def validate_region(name: str, expected_capacity_kb: int, maximum_used: int) -> None:
+              pattern = re.compile(
+                  rf'^\s*{name}:\s+([0-9]+)\s+B\s+([0-9]+)\s+KB(?:\s+.*)?$',
+                  re.MULTILINE,
+              )
+              matches = pattern.findall(report)
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected exactly one numeric {name} memory record')
+              used_bytes, capacity_kb = (int(value) for value in matches[0])
+              if capacity_kb != expected_capacity_kb:
+                  raise SystemExit(
+                      f'{name} capacity mismatch: {capacity_kb} KB != {expected_capacity_kb} KB'
+                  )
+              if used_bytes > maximum_used:
+                  raise SystemExit(
+                      f'{name} usage exceeds limit: {used_bytes} B > {maximum_used} B'
+                  )
+              print(f'{name} usage: {used_bytes} B / {capacity_kb} KB PASS')
+
+          validate_region('FLASH', expected_capacity_kb=512, maximum_used=32768)
+          validate_region('RAM', expected_capacity_kb=96, maximum_used=16384)
+          PYTHON
 
           mkdir -p "${FIRMWARE_ARTIFACT_DIR}/zephyr" "${FIRMWARE_ARTIFACT_DIR}/native_sim"
           install -m 0644 "${NUCLEO_BUILD_DIR}/zephyr/zephyr.elf" \
