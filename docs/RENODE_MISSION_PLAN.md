@@ -16,21 +16,52 @@ records, a 34-byte Protocol v1 serializer, a 68-character hexadecimal formatter,
 explicit summary and completion markers, deterministic `native_sim` exit, 43
 Firmware tests, 29 Protocol tests, 67 Host tests, and one Host smoke test.
 
-Readiness is partial because the current checkout has no NUCLEO-F401RE ELF,
-Renode and Robot Framework are not available in the current environment, and
-the exact STM32F401RE platform/UART mapping has not been proven. Mission 4 must
-start with tool-version qualification and a reproducible ELF build.
+Mission 4.0 qualified Renode 1.16.1 with its bundled .NET 8 runtime and Robot
+Framework 6.1 in an isolated environment. A pristine NUCLEO-F401RE build
+produced a loadable ELF, and the upstream `platforms/cpus/stm32f4.repl` model
+booted it headlessly through the complete deterministic workload. Its USART2
+file backend captured exactly eight ordered 68-character `TLFRAME` values, the
+expected summary, and the final completion marker.
+
+Readiness remains partial at the mission level because the repository still
+has no durable Renode scenario, Robot acceptance suite, Protocol Core capture
+validator, or CI integration. The upstream STM32F4 model is a viable base but
+is not an exact STM32F401RE board description: its modeled flash, RAM, CPU
+variant label, and SysTick frequency are broader or different from the target.
 
 Readiness gates:
 
 | Gate | Initial state | Required Mission 4 result |
 |---|---|---|
-| NUCLEO-F401RE ELF | BLOCKED | Rebuild and record the loadable `zephyr.elf` path and checksum. |
+| NUCLEO-F401RE ELF | READY | Reproduce the pristine build and record the `zephyr.elf` checksum in the validation run. |
 | Deterministic frames | READY | Preserve exactly eight ordered frames. |
 | Protocol and CRC | READY | Reuse Protocol Core as the validation authority. |
-| Headless execution | PARTIALLY READY | Define and validate a non-interactive Renode command. |
-| Console capture | PARTIALLY READY | Prove the modeled UART and capture boundaries. |
-| Robot automation | PARTIALLY READY | Add suites, keywords, exit behavior, and reports. |
+| Headless execution | READY | Productize the proven non-interactive command with a finite timeout. |
+| Console capture | READY | Productize capture from USART2 at `0x40004400`, IRQ 38, 115200 baud. |
+| Robot automation | PARTIALLY READY | The official runner passed a packaged smoke test; project suites, keywords, failure behavior, and reports remain to be added. |
+
+Preparation evidence and constraints:
+
+- The target is ARM ELF32, little-endian, EABI5, with entry point `0x08001079`;
+  Renode initialized the CPU at that entry point with stack pointer
+  `0x20002FC0`.
+- Loadable content occupies flash from `0x08000000` and RAM from `0x20000000`.
+  The build reported 30,624 bytes of flash and 12,428 bytes of RAM.
+- Zephyr selects USART2 as `zephyr,console`; the generated device tree records
+  base address `0x40004400`, IRQ 38, and 115200 baud. These match the USART2
+  peripheral in the upstream STM32F4 model.
+- The upstream model uses a Cortex-M4 CPU label, 2 MiB flash, 256 KiB RAM, and a
+  72 MHz SysTick, while STM32F401RE requires Cortex-M4F semantics, 512 KiB
+  flash, 96 KiB RAM, and an 84 MHz board clock. A minimal project wrapper must
+  constrain or document these differences instead of copying the generic model
+  unchanged.
+- Platform loading requires the official STM32F40x SVD resource. The future
+  workflow must pin, cache, or otherwise provision it reproducibly for offline
+  and CI execution.
+- The capability run reached Zephyr boot, emitted all expected records, and did
+  not halt the CPU during the validation interval. Model warnings for partially
+  implemented NVIC, flash-controller, RCC, and debug-register writes must be
+  reviewed when defining the supported validation boundary.
 
 ## Target Architecture
 
@@ -59,8 +90,9 @@ binary layout or CRC implementation.
 
 The planned execution sequence is:
 
-1. Pin a supported Renode version and verify whether an upstream STM32F401RE or
-   NUCLEO-F401RE platform description is sufficient.
+1. Pin Renode 1.16.1 and use the qualified upstream STM32F4 model as the base
+   for a minimal STM32F401RE project wrapper with explicit memory and clock
+   constraints.
 2. Rebuild the Zephyr ELF with deterministic configuration and capture its
    checksum and memory-map inputs.
 3. Define the platform, CPU, flash/RAM regions, clock, and console UART.
@@ -148,8 +180,9 @@ Mission 4 will be accepted only when all of the following are true:
 
 1. A documented command reproducibly builds the NUCLEO-F401RE `zephyr.elf` from
    the current Firmware sources.
-2. A pinned Renode version loads that ELF with no unmapped-memory or fatal CPU
-   error during the validation interval.
+2. Renode 1.16.1 loads that ELF with no unmapped-memory or fatal CPU error
+   during the validation interval; any accepted model warning is documented
+   and narrowly justified.
 3. The selected UART console is documented and captured in headless execution.
 4. One command runs the Robot suite without manual interaction and with a finite
    timeout.
