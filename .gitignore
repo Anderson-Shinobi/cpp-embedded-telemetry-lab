@@ -9,3 +9,7 @@
 /log.html
 /report.html
 *.log
+release-results/
+ci-results/
+*.profraw
+*.profdata

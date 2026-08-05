@@ -291,6 +291,24 @@ clock fidelity are documented in [docs/RENODE.md](docs/RENODE.md).
 - [Mission 4 plan and acceptance criteria](docs/RENODE_MISSION_PLAN.md)
 - [Renode local execution guide](renode/README.md)
 
+## Continuous Integration
+
+The `Embedded Telemetry CI` workflow validates Host CTest, firmware
+Twister/Ztest, deterministic `native_sim` execution, the NUCLEO-F401RE build,
+headless Renode and USART2 capture, Protocol v1 CRC-32, Robot Framework and
+three identical executions. It runs for `main`, pull requests, version tags and
+manual dispatch without flashing hardware or publishing releases.
+
+Run the equivalent local validation and present an approved report with:
+
+```sh
+./tools/run-release-validation.sh --rebuild
+./tools/present-release-validation.sh
+```
+
+See [docs/CI.md](docs/CI.md) for job dependencies, pinned toolchains, artifact
+retention, security controls and recording commands.
+
 ## Testes
 
 ```sh

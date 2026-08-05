@@ -1,0 +1,574 @@
+name: Embedded Telemetry CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  ZEPHYR_REVISION: 746eb4060b3e573a8d25f4d3e5ac43a721876afc
+  ZEPHYR_SDK_VERSION: 1.0.1
+  WEST_VERSION: 1.5.0
+  RENODE_VERSION: 1.16.1
+  RENODE_ARCHIVE: renode-1.16.1.linux-portable-dotnet.tar.gz
+  RENODE_SHA256: 00e113cdbd0f5354cf2f64bbe3f5a070d8958409542fca66e45ac97d982938c0
+  CONTROLLED_OUTPUT_SHA256: d7407bc99a90236df51892aee25428c5066c529681f3e0c3e43458ba85df535e
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate repository quality
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          scripts=(
+            tools/build-renode-firmware.sh
+            tools/run-renode-validation.sh
+            tools/run-renode-robot.sh
+            tools/run-firmware-demo.sh
+            tools/run-portfolio-validation.sh
+            tools/present-firmware-demo.sh
+            tools/run-release-validation.sh
+            tools/present-release-validation.sh
+          )
+
+          git diff --check
+          bash -n "${scripts[@]}"
+          shellcheck "${scripts[@]}"
+
+          export PYTHONPYCACHEPREFIX="${RUNNER_TEMP}/python-cache"
+          python3 -m py_compile renode/tests/resources/telemetry_validation.py
+          python3 -m compileall -q renode/tests/resources
+          rm -rf -- "${PYTHONPYCACHEPREFIX}"
+          if find renode/tests/resources -type d -name __pycache__ -print -quit | grep -q .; then
+            printf 'Python bytecode cache remained in the workspace.\n' >&2
+            exit 1
+          fi
+
+          private_path_pattern='/ho''me/[^/]+/(Doc''umentos|Doc''uments|To''ols)|/Us''ers/[^/]+/'
+          if grep -RniE "${private_path_pattern}" README.md docs tools .github; then
+            printf 'Private developer path detected.\n' >&2
+            exit 1
+          fi
+
+          attribution_pattern='co-authored''-by|generated''-by|assisted''-by|cur''sor|co''dex|open''ai|ai-''generated|artificial'' intelligence|signed-off''-by'
+          if grep -RniE "${attribution_pattern}" README.md docs tools .github; then
+            printf 'Prohibited attribution detected.\n' >&2
+            exit 1
+          fi
+
+          dangerous_pattern='su''do|west fla''sh|west deb''ug|west atta''ch|sh''ell=True|os.''system|subprocess.*sh''ell|ev''al '
+          if grep -RniE "${dangerous_pattern}" .github tools/run-release-validation.sh tools/present-release-validation.sh; then
+            printf 'Dangerous command detected.\n' >&2
+            exit 1
+          fi
+
+          required_files=(
+            CMakeLists.txt
+            CMakePresets.json
+            README.md
+            docs/CI.md
+            docs/PROTOCOL.md
+            docs/HOST_PIPELINE.md
+            docs/FIRMWARE.md
+            docs/RENODE.md
+            docs/RENODE_MISSION_PLAN.md
+            firmware/CMakeLists.txt
+            host/CMakeLists.txt
+            protocol/CMakeLists.txt
+            renode/README.md
+            renode/platforms/nucleo_f401re.repl
+            renode/scripts/telemetry_firmware.resc
+            renode/tests/telemetry_firmware.robot
+            renode/tests/resources/telemetry_validation.py
+            tools/run-release-validation.sh
+            tools/present-release-validation.sh
+          )
+          for required_file in "${required_files[@]}"; do
+            test -f "${required_file}"
+          done
+
+          python3 - <<'PYTHON'
+          import re
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/ci.yml').read_text(encoding='utf-8')
+          references = re.findall(r'uses:\s+([^\s#]+)', workflow)
+          if not references:
+              raise SystemExit('No external actions found')
+          for reference in references:
+              owner_action, separator, revision = reference.partition('@')
+              if not separator or not re.fullmatch(r'[0-9a-f]{40}', revision):
+                  raise SystemExit(f'Action is not pinned by a full SHA: {reference}')
+              if owner_action not in {
+                  'actions/checkout',
+                  'actions/upload-artifact',
+                  'actions/download-artifact',
+                  'zephyrproject-rtos/action-zephyr-setup',
+              }:
+                  raise SystemExit(f'Action is not approved: {owner_action}')
+          PYTHON
+
+  host-tests:
+    name: Host CTest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DEPENDENCY_COMMIT: 93662e741ada326ebd31f856163036c5c2c1625f
+      DEPENDENCY_SOURCE: ${{ runner.temp }}/cpp-safe-concurrent-buffer
+      DEPENDENCY_BUILD: ${{ runner.temp }}/cpp-safe-concurrent-buffer-build
+      DEPENDENCY_PREFIX: ${{ runner.temp }}/cpp-safe-concurrent-buffer-prefix
+      HOST_BUILD_DIR: ${{ runner.temp }}/host-build
+      HOST_RESULTS_DIR: ${{ runner.temp }}/host-results
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build installed queue dependency
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${HOST_RESULTS_DIR}"
+          git clone --branch v0.3.0 --depth 1 \
+            https://github.com/Anderson-Shinobi/cpp-safe-concurrent-buffer.git \
+            "${DEPENDENCY_SOURCE}"
+          test "$(git -C "${DEPENDENCY_SOURCE}" rev-parse HEAD)" = "${DEPENDENCY_COMMIT}"
+          cmake -S "${DEPENDENCY_SOURCE}" -B "${DEPENDENCY_BUILD}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${DEPENDENCY_PREFIX}" \
+            2>&1 | tee "${HOST_RESULTS_DIR}/dependency-configure.log"
+          cmake --build "${DEPENDENCY_BUILD}" --parallel \
+            2>&1 | tee "${HOST_RESULTS_DIR}/dependency-build.log"
+          cmake --install "${DEPENDENCY_BUILD}" \
+            2>&1 | tee "${HOST_RESULTS_DIR}/dependency-install.log"
+
+      - name: Configure and build host targets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmake -S . -B "${HOST_BUILD_DIR}" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_PREFIX_PATH="${DEPENDENCY_PREFIX}" \
+            2>&1 | tee "${HOST_RESULTS_DIR}/configure.log"
+          cmake --build "${HOST_BUILD_DIR}" --parallel \
+            2>&1 | tee "${HOST_RESULTS_DIR}/build.log"
+
+      - name: Run and verify all host tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ctest --test-dir "${HOST_BUILD_DIR}" -N \
+            2>&1 | tee "${HOST_RESULTS_DIR}/discovery.log"
+          test "$(awk '/Total Tests:/ { count = $3 } END { print count + 0 }' "${HOST_RESULTS_DIR}/discovery.log")" = 97
+          ctest --test-dir "${HOST_BUILD_DIR}" \
+            --output-on-failure \
+            --output-junit "${HOST_RESULTS_DIR}/ctest.xml" \
+            2>&1 | tee "${HOST_RESULTS_DIR}/ctest.log"
+          python3 - "${HOST_RESULTS_DIR}/ctest.xml" <<'PYTHON'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          tests = int(root.attrib.get('tests', 0))
+          failures = int(root.attrib.get('failures', 0))
+          errors = int(root.attrib.get('errors', 0))
+          if (tests, failures, errors) != (97, 0, 0):
+              raise SystemExit(
+                  f'Expected 97 passing CTest cases, observed '
+                  f'tests={tests} failures={failures} errors={errors}'
+              )
+          PYTHON
+
+      - name: Upload host test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: host-test-results-${{ github.sha }}
+          path: ${{ runner.temp }}/host-results
+          if-no-files-found: error
+          retention-days: 14
+
+  firmware-tests:
+    name: Firmware Twister and Ztest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ZEPHYR_WORKSPACE: ${{ runner.temp }}/zephyr-workspace
+      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-workspace/zephyr
+      TWISTER_OUTDIR: ${{ runner.temp }}/twister-results
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create pinned Zephyr manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${ZEPHYR_WORKSPACE}/manifest"
+          printf '%s\n' \
+            'manifest:' \
+            '  version: "0.13"' \
+            '  projects:' \
+            '    - name: zephyr' \
+            '      url: https://github.com/zephyrproject-rtos/zephyr' \
+            "      revision: ${ZEPHYR_REVISION}" \
+            '      import: true' \
+            '  self:' \
+            '    path: manifest' \
+            > "${ZEPHYR_WORKSPACE}/manifest/west.yml"
+
+      - name: Set up Zephyr and ARM toolchain
+        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
+        with:
+          base-path: ${{ runner.temp }}/zephyr-workspace
+          app-path: manifest
+          sdk-version: 1.0.1
+          toolchains: arm-zephyr-eabi
+          west-version: 1.5.0
+          enable-ccache: false
+
+      - name: Run and verify Twister suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C "${ZEPHYR_BASE}" rev-parse HEAD)" = "${ZEPHYR_REVISION}"
+          temporary_conf="${RUNNER_TEMP}/firmware-test-prj.conf"
+          install -m 0644 tests/firmware/prj.conf "${temporary_conf}"
+          west twister \
+            -T tests/firmware \
+            -p native_sim \
+            --outdir "${TWISTER_OUTDIR}" \
+            --short-build-path \
+            --extra-args "CONF_FILE=${temporary_conf}" \
+            2>&1 | tee "${RUNNER_TEMP}/twister.log"
+          install -m 0644 "${RUNNER_TEMP}/twister.log" "${TWISTER_OUTDIR}/twister-console.log"
+          python3 - "${TWISTER_OUTDIR}/twister.json" <<'PYTHON'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as report:
+              data = json.load(report)
+          cases = [
+              case
+              for suite in data['testsuites']
+              for case in suite['testcases']
+          ]
+          passed = sum(case['status'] == 'passed' for case in cases)
+          if (len(cases), passed) != (43, 43):
+              raise SystemExit(f'Expected 43/43 passing cases, observed {passed}/{len(cases)}')
+          PYTHON
+          test -f "${TWISTER_OUTDIR}/twister.xml"
+
+      - name: Upload Twister reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: firmware-twister-results-${{ github.sha }}
+          path: ${{ runner.temp }}/twister-results
+          if-no-files-found: error
+          retention-days: 14
+
+  firmware-build:
+    name: Firmware builds and native_sim
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ZEPHYR_WORKSPACE: ${{ runner.temp }}/zephyr-workspace
+      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-workspace/zephyr
+      FIRMWARE_RESULTS_DIR: ${{ runner.temp }}/nucleo-artifact/evidence
+      NATIVE_BUILD_DIR: ${{ runner.temp }}/native-sim-build
+      NUCLEO_BUILD_DIR: ${{ runner.temp }}/nucleo-f401re-build
+      FIRMWARE_ARTIFACT_DIR: ${{ runner.temp }}/nucleo-artifact
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create pinned Zephyr manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${ZEPHYR_WORKSPACE}/manifest"
+          printf '%s\n' \
+            'manifest:' \
+            '  version: "0.13"' \
+            '  projects:' \
+            '    - name: zephyr' \
+            '      url: https://github.com/zephyrproject-rtos/zephyr' \
+            "      revision: ${ZEPHYR_REVISION}" \
+            '      import: true' \
+            '  self:' \
+            '    path: manifest' \
+            > "${ZEPHYR_WORKSPACE}/manifest/west.yml"
+
+      - name: Set up Zephyr and ARM toolchain
+        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
+        with:
+          base-path: ${{ runner.temp }}/zephyr-workspace
+          app-path: manifest
+          sdk-version: 1.0.1
+          toolchains: arm-zephyr-eabi
+          west-version: 1.5.0
+          enable-ccache: false
+
+      - name: Build and validate native_sim
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git -C "${ZEPHYR_BASE}" rev-parse HEAD)" = "${ZEPHYR_REVISION}"
+          mkdir -p "${FIRMWARE_RESULTS_DIR}"
+          temporary_conf="${RUNNER_TEMP}/firmware-prj.conf"
+          install -m 0644 firmware/prj.conf "${temporary_conf}"
+          west build \
+            -b native_sim \
+            firmware \
+            -d "${NATIVE_BUILD_DIR}" \
+            --pristine \
+            -- \
+            -DCONF_FILE="${temporary_conf}" \
+            2>&1 | tee "${FIRMWARE_RESULTS_DIR}/native-sim-build.log"
+          "${NATIVE_BUILD_DIR}/zephyr/zephyr.exe" -stop_at=1 -no-rt \
+            > "${FIRMWARE_RESULTS_DIR}/native-sim.log" 2>&1
+          python3 renode/tests/resources/telemetry_validation.py \
+            "${FIRMWARE_RESULTS_DIR}/native-sim.log"
+          awk '/^(TLFRAME|TLFIRMWARE)/ { sub(/\r$/, ""); print }' \
+            "${FIRMWARE_RESULTS_DIR}/native-sim.log" \
+            > "${FIRMWARE_RESULTS_DIR}/controlled-output.txt"
+          test "$(sha256sum "${FIRMWARE_RESULTS_DIR}/controlled-output.txt" | awk '{ print $1 }')" = \
+            "${CONTROLLED_OUTPUT_SHA256}"
+
+      - name: Build and inspect NUCLEO-F401RE firmware
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          temporary_conf="${RUNNER_TEMP}/firmware-prj.conf"
+          west build \
+            -b nucleo_f401re \
+            firmware \
+            -d "${NUCLEO_BUILD_DIR}" \
+            --pristine \
+            -- \
+            -DCONF_FILE="${temporary_conf}" \
+            2>&1 | tee "${FIRMWARE_RESULTS_DIR}/nucleo-build.log"
+          file "${NUCLEO_BUILD_DIR}/zephyr/zephyr.elf" \
+            | tee "${FIRMWARE_RESULTS_DIR}/elf-description.txt"
+          grep -Eq 'ELF 32-bit.*ARM' "${FIRMWARE_RESULTS_DIR}/elf-description.txt"
+          grep -E '^[[:space:]]*(FLASH|RAM):' "${FIRMWARE_RESULTS_DIR}/nucleo-build.log" \
+            | tee "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
+          grep -Eq 'FLASH:[[:space:]]+30624 B[[:space:]]+512 KB[[:space:]]+5.84%' \
+            "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
+          grep -Eq 'RAM:[[:space:]]+12428 B[[:space:]]+96 KB[[:space:]]+12.64%' \
+            "${FIRMWARE_RESULTS_DIR}/memory-usage.txt"
+
+          mkdir -p "${FIRMWARE_ARTIFACT_DIR}/zephyr" "${FIRMWARE_ARTIFACT_DIR}/native_sim"
+          install -m 0644 "${NUCLEO_BUILD_DIR}/zephyr/zephyr.elf" \
+            "${FIRMWARE_ARTIFACT_DIR}/zephyr/zephyr.elf"
+          for artifact_name in zephyr.bin zephyr.hex zephyr.map; do
+            if [[ -f "${NUCLEO_BUILD_DIR}/zephyr/${artifact_name}" ]]; then
+              install -m 0644 "${NUCLEO_BUILD_DIR}/zephyr/${artifact_name}" \
+                "${FIRMWARE_ARTIFACT_DIR}/zephyr/${artifact_name}"
+            fi
+          done
+          install -m 0644 "${FIRMWARE_RESULTS_DIR}/nucleo-build.log" \
+            "${FIRMWARE_ARTIFACT_DIR}/nucleo-build.log"
+          install -m 0644 "${FIRMWARE_RESULTS_DIR}/memory-usage.txt" \
+            "${FIRMWARE_ARTIFACT_DIR}/memory-usage.txt"
+          install -m 0644 "${FIRMWARE_RESULTS_DIR}/controlled-output.txt" \
+            "${FIRMWARE_ARTIFACT_DIR}/native_sim/controlled-output.txt"
+          install -m 0644 "${FIRMWARE_RESULTS_DIR}/native-sim-build.log" \
+            "${FIRMWARE_ARTIFACT_DIR}/native_sim/build.log"
+
+      - name: Upload NUCLEO firmware and native_sim evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nucleo-f401re-firmware-${{ github.sha }}
+          path: ${{ runner.temp }}/nucleo-artifact
+          if-no-files-found: error
+          retention-days: 14
+
+  renode-validation:
+    name: Renode and Robot Framework
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs:
+      - firmware-build
+    env:
+      RENODE_HOME: ${{ runner.temp }}/renode
+      RENODE_BUILD_DIR: /tmp/cpp-embedded-telemetry-ci-renode-build
+      RENODE_RESULTS_DIR: /tmp/cpp-embedded-telemetry-ci-renode-results
+      ZEPHYR_BASE: ${{ runner.temp }}/zephyr-base
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download prebuilt firmware artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nucleo-f401re-firmware-${{ github.sha }}
+          path: /tmp/cpp-embedded-telemetry-ci-renode-build
+
+      - name: Install verified Renode portable package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          archive_path="${RUNNER_TEMP}/${RENODE_ARCHIVE}"
+          download_url="https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/${RENODE_ARCHIVE}"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${archive_path}" "${download_url}"
+          printf '%s  %s\n' "${RENODE_SHA256}" "${archive_path}" | sha256sum --check -
+          mkdir -p "${RENODE_HOME}"
+          tar -xzf "${archive_path}" -C "${RENODE_HOME}" --strip-components=1
+          test -x "${RENODE_HOME}/renode"
+          test -x "${RENODE_HOME}/renode-test"
+          "${RENODE_HOME}/renode" --version
+
+      - name: Create isolated Robot environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m venv "${RUNNER_TEMP}/renode-venv"
+          "${RUNNER_TEMP}/renode-venv/bin/python" -m pip install --upgrade pip
+          "${RUNNER_TEMP}/renode-venv/bin/python" -m pip install \
+            --requirement "${RENODE_HOME}/tests/requirements.txt" \
+            "west==${WEST_VERSION}"
+          printf '%s\n' "${RUNNER_TEMP}/renode-venv/bin" >> "${GITHUB_PATH}"
+          mkdir -p "${ZEPHYR_BASE}" "${RENODE_RESULTS_DIR}/artifacts"
+          test -f "${RENODE_BUILD_DIR}/zephyr/zephyr.elf"
+
+      - name: Run Renode validation and determinism checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for run_number in 1 2 3; do
+            run_log="${RENODE_RESULTS_DIR}/artifacts/renode-validation-${run_number}.log"
+            ./tools/run-renode-validation.sh --keep-results \
+              2>&1 | tee "${run_log}"
+            run_dir="$(awk '/^Results: / { print substr($0, 10) }' "${run_log}")"
+            test -n "${run_dir}"
+            test -f "${run_dir}/controlled-output.txt"
+            install -m 0644 "${run_dir}/controlled-output.txt" \
+              "${RENODE_RESULTS_DIR}/artifacts/controlled-output-${run_number}.txt"
+            install -m 0644 "${run_dir}/usart2.log" \
+              "${RENODE_RESULTS_DIR}/artifacts/usart2-${run_number}.log"
+            install -m 0644 "${run_dir}/renode-monitor.log" \
+              "${RENODE_RESULTS_DIR}/artifacts/renode-monitor-${run_number}.log"
+          done
+
+          cmp "${RENODE_RESULTS_DIR}/artifacts/controlled-output-1.txt" \
+            "${RENODE_RESULTS_DIR}/artifacts/controlled-output-2.txt"
+          cmp "${RENODE_RESULTS_DIR}/artifacts/controlled-output-1.txt" \
+            "${RENODE_RESULTS_DIR}/artifacts/controlled-output-3.txt"
+          sha256sum "${RENODE_RESULTS_DIR}/artifacts/controlled-output-"*.txt \
+            | tee "${RENODE_RESULTS_DIR}/artifacts/determinism-sha256.txt"
+          test "$(sha256sum "${RENODE_RESULTS_DIR}/artifacts/controlled-output-1.txt" | awk '{ print $1 }')" = \
+            "${CONTROLLED_OUTPUT_SHA256}"
+
+      - name: Run and verify Robot Framework suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          robot_log="${RENODE_RESULTS_DIR}/artifacts/robot-run.log"
+          ./tools/run-renode-robot.sh --keep-results \
+            2>&1 | tee "${robot_log}"
+          output_xml="$(awk '/^output.xml: / { print substr($0, 13) }' "${robot_log}")"
+          test -f "${output_xml}"
+          reports_dir="$(dirname -- "${output_xml}")"
+          python3 - "${output_xml}" <<'PYTHON'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          tests = root.findall('.//test')
+          passed = sum(
+              test.find('status') is not None
+              and test.find('status').attrib.get('status') == 'PASS'
+              for test in tests
+          )
+          if (len(tests), passed) != (7, 7):
+              raise SystemExit(f'Expected 7/7 Robot cases, observed {passed}/{len(tests)}')
+          PYTHON
+          for report_name in robot_output.xml output.xml log.html report.html; do
+            test -f "${reports_dir}/${report_name}"
+            install -m 0644 "${reports_dir}/${report_name}" \
+              "${RENODE_RESULTS_DIR}/artifacts/${report_name}"
+          done
+
+      - name: Upload Renode and Robot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: renode-robot-results-${{ github.sha }}
+          path: /tmp/cpp-embedded-telemetry-ci-renode-results/artifacts
+          if-no-files-found: error
+          retention-days: 14
+
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - quality
+      - host-tests
+      - firmware-tests
+      - firmware-build
+      - renode-validation
+    if: ${{ success() }}
+    steps:
+      - name: Publish validated summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          summary_dir="${RUNNER_TEMP}/ci-summary"
+          summary_file="${summary_dir}/validation-summary.md"
+          mkdir -p "${summary_dir}"
+          {
+            printf '## Embedded Telemetry CI\n\n'
+            printf 'Commit: `%s`  \n' "${GITHUB_SHA}"
+            printf 'Ref: `%s`\n\n' "${GITHUB_REF}"
+            printf '| Validation | Result |\n'
+            printf '|---|---|\n'
+            printf '| Quality checks | PASS |\n'
+            printf '| Host CTest | 97/97 PASS |\n'
+            printf '| Firmware Twister/Ztest | 43/43 PASS |\n'
+            printf '| native_sim | PASS |\n'
+            printf '| NUCLEO-F401RE build | PASS |\n'
+            printf '| Renode ELF load | PASS |\n'
+            printf '| Zephyr boot | PASS |\n'
+            printf '| USART2 capture | PASS |\n'
+            printf '| TLFRAME | 8/8 PASS |\n'
+            printf '| CRC-32 | 8/8 PASS |\n'
+            printf '| Robot Framework | 7/7 PASS |\n'
+            printf '| Determinism | 3/3 identical |\n'
+          } | tee "${summary_file}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload final validation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-validation-report-${{ github.sha }}
+          path: ${{ runner.temp }}/ci-summary/validation-summary.md
+          if-no-files-found: error
+          retention-days: 14
